@@ -6,6 +6,10 @@ PORT=9200
 [ -d "$VENV" ] || python3 -m venv "$VENV"
 source "$VENV/bin/activate"
 pip install -q -r "$DIR/requirements.txt" -i https://mirrors.cloud.tencent.com/pypi/simple
+# ===== 配置区（改这里）=====
+export SMARTWIKI_KEYS="${SMARTWIKI_KEYS:-smartwiki2026}"        # API 密钥，逗号分隔可多个
+export SMART_AUTH_URL="${SMART_AUTH_URL:-http://127.0.0.1:9000/system/auth/validate}"  # smart 单点认证校验地址（POST，body.code=200 才放行）
+# ============================
 case "$1" in
   stop)  pkill -f "uvicorn app:app" 2>/dev/null && echo "stopped" || echo "not running" ;;
   status) curl -s "http://127.0.0.1:$PORT/health" || echo "not running" ;;
