@@ -14,7 +14,7 @@ import urllib.request
 from urllib.parse import quote
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from markitdown import MarkItDown
 
 API_KEYS = {
@@ -29,7 +29,7 @@ ALLOWED_EXT = {
     ".json", ".xml", ".zip", ".md", ".html", ".txt",
 }
 
-app = FastAPI(title="smart-wiki converter", version="0.2.0")
+app = FastAPI(title="smart-wiki converter", version="0.3.0")
 _md = MarkItDown(enable_plugins=False)
 
 
@@ -99,6 +99,92 @@ def _tmp_path(ext: str) -> str:
 @app.get("/health")
 def health():
     return {"status": "ok", "engine": "markitdown", "auth": "api-key or smart-jwt"}
+
+
+_PAGE = """<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>smart-wiki 文档转 Markdown</title>
+<style>
+ *{box-sizing:border-box} body{font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+   max-width:860px;margin:0 auto;padding:24px 16px;background:#f6f7f9;color:#222}
+ h1{font-size:20px} .card{background:#fff;border-radius:12px;padding:20px;margin-bottom:16px;
+   box-shadow:0 1px 4px rgba(0,0,0,.08)}
+ #drop{border:2px dashed #bbb;border-radius:12px;padding:36px;text-align:center;cursor:pointer;transition:.2s}
+ #drop.on{border-color:#4a7df0;background:#eef4ff}
+ #key{width:100%%;padding:10px;border:1px solid #ddd;border-radius:8px;font-size:14px}
+ button{background:#4a7df0;color:#fff;border:0;border-radius:8px;padding:10px 18px;font-size:14px;cursor:pointer}
+ button:disabled{background:#aaa}
+ #bar{height:6px;background:#e8e8e8;border-radius:3px;overflow:hidden;display:none;margin-top:12px}
+ #bar i{display:block;height:100%%;width:35%%;background:#4a7df0;animation:mv 1.1s infinite linear}
+ @keyframes mv{0%%{margin-left:-35%%}100%%{margin-left:100%%}}
+ pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;border-radius:10px;
+   padding:16px;font-size:13px;max-height:480px;overflow:auto}
+ .row{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;align-items:center}
+ .tip{color:#888;font-size:12px;margin-top:10px} .err{color:#d33;margin-top:10px;font-size:14px}
+ .ok{color:#2a2;font-size:13px} a.btn{display:inline-block;background:#32a852;color:#fff;text-decoration:none;
+   border-radius:8px;padding:10px 18px;font-size:14px}
+</style></head><body>
+<h1>📄 smart-wiki 文档转 Markdown</h1>
+<div class="card">
+ <input id="key" placeholder="访问密钥（X-API-Key，问管理员要；本机存浏览器，不上传）">
+ <div style="height:12px"></div>
+ <div id="drop">把文件拖到这里，或点击选择<br>
+  <span class="tip">docx / xlsx / pptx / pdf / csv / json / xml / zip / md / html / txt · 最大 100MB</span>
+ </div>
+ <input id="file" type="file" hidden>
+ <div id="bar"><i></i></div>
+ <div id="err" class="err"></div>
+</div>
+<div class="card" id="out" style="display:none">
+ <div class="row"><b id="fname"></b><span id="meta" class="ok"></span></div>
+ <div class="row">
+  <button onclick="cp()">复制全文</button>
+  <a class="btn" id="dl" download="">下载 .md</a>
+  <button onclick="location.reload()" style="background:#666">再传一个</button>
+ </div>
+ <div style="height:10px"></div><pre id="md"></pre>
+</div>
+<div class="tip">服务基于微软 MarkItDown · 文件只在内存转换，服务器不保存 · 内网程序调用见 README</div>
+<script>
+const $=id=>document.getElementById(id), drop=$('drop'), inp=$('file');
+$('key').value=localStorage.getItem('swKey')||'';
+$('key').onchange=()=>localStorage.setItem('swKey',$('key').value.trim());
+drop.onclick=()=>inp.click();
+drop.ondragover=e=>{e.preventDefault();drop.classList.add('on')};
+drop.ondragleave=()=>drop.classList.remove('on');
+drop.ondrop=e=>{e.preventDefault();drop.classList.remove('on');go(e.dataTransfer.files[0])};
+inp.onchange=()=>go(inp.files[0]);
+async function go(f){
+ if(!f)return; $('err').textContent='';
+ const key=$('key').value.trim();
+ if(!key){$('err').textContent='请先填访问密钥';return}
+ $('bar').style.display='block'; $('out').style.display='none';
+ try{
+  const fd=new FormData(); fd.append('file',f);
+  const r=await fetch('convert/json',{method:'POST',headers:{'X-API-Key':key},body:fd});
+  const d=await r.json();
+  if(!r.ok||!d.ok){$('err').textContent='失败(' + r.status + '): '+(d.detail||'未知错误');return}
+  localStorage.setItem('swKey',key);
+  $('fname').textContent=d.filename;
+  $('meta').textContent='→ '+d.md_size+' 字符 · '+d.elapsed_ms+'ms';
+  $('md').textContent=d.md;
+  const blob=new Blob([d.md],{type:'text/markdown'});
+  $('dl').href=URL.createObjectURL(blob);
+  $('dl').download=d.md_filename;
+  $('out').style.display='block';
+ }catch(e){$('err').textContent='网络错误: '+e}
+ finally{$('bar').style.display='none'; inp.value=''}
+}
+function cp(){navigator.clipboard.writeText($('md').textContent);
+ event.target.textContent='已复制 ✓';setTimeout(()=>event.target.textContent='复制全文',1200)}
+</script></body></html>"""
+
+
+@app.get("/")
+def index():
+    """网页版上传界面（页面公开，转换仍需密钥）"""
+    return HTMLResponse(_PAGE)
 
 
 @app.post("/convert")
