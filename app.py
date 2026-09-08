@@ -32,10 +32,11 @@ async def convert(file: UploadFile = File(...), token: str = Query(default="")):
         with open(tmp, "wb") as f:
             f.write(await file.read())
         result = _md.convert(tmp)
+        text = result.text_content.replace("\x0c", "\n")  # 去掉 PDF 分页符残留
         md_name = os.path.splitext(name)[0] + ".md"
         ascii_name = md_name.encode("ascii", "ignore").decode() or "output.md"
         return Response(
-            content=result.text_content,
+            content=text,
             media_type="text/markdown; charset=utf-8",
             headers={
                 "Content-Disposition": (
