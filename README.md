@@ -19,12 +19,12 @@
 ./start.sh status   # 状态
 ```
 
-服务监听 127.0.0.1:18100，外网经 nginx 443 反代 `/wikidoc/`。
+服务监听 0.0.0.0:9200（云防火墙已放行，直接外网访问）；另提供 https 反代 `https://www.hrfan.cn/wikidoc/`。
 
 ## 调用示例
 
 ```bash
-curl -X POST "https://www.hrfan.cn/wikidoc/convert?token=<TOKEN>" \
+curl -X POST "http://111.229.8.102:9200/convert?token=<TOKEN>" \
   -F "file=@文档.docx" -o 输出.md
 ```
 
