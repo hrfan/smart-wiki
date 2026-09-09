@@ -4,7 +4,12 @@
 1. X-API-Key: <静态密钥>          —— 程序调用推荐
 2. Authorization: Bearer <smart JWT> —— 单点认证，转发给 smart 系统校验，smart 登录的用户可直接调
 密钥通过环境变量 SMARTWIKI_KEYS 配置（逗号分隔多个）
+
+Word 图片处理（v0.4.0+）：
+docx 里的内嵌图片会抽取保存到 media/ 目录（sha256 哈希命名，自动去重），
+MD 正文里生成可公网访问的图片链接（SMARTWIKI_MEDIA_URL 前缀）。
 """
+import hashlib
 import json
 import os
 import secrets
@@ -13,9 +18,13 @@ import urllib.error
 import urllib.request
 from urllib.parse import quote
 
+import mammoth
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from markitdown import MarkItDown
+from markitdown.converters._html_converter import HtmlConverter
+from markitdown.converter_utils.docx.pre_process import pre_process_docx
 
 API_KEYS = {
     k.strip() for k in os.environ.get("SMARTWIKI_KEYS", "smartwiki2026").split(",") if k.strip()
@@ -28,9 +37,16 @@ ALLOWED_EXT = {
     ".docx", ".xlsx", ".pptx", ".pdf", ".csv",
     ".json", ".xml", ".zip", ".md", ".html", ".txt",
 }
+MEDIA_DIR = os.environ.get(
+    "SMARTWIKI_MEDIA_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "media")
+)
+MEDIA_URL_BASE = os.environ.get("SMARTWIKI_MEDIA_URL", "https://www.hrfan.cn/wikidoc/media")
+os.makedirs(MEDIA_DIR, exist_ok=True)
 
-app = FastAPI(title="smart-wiki converter", version="0.3.0")
+app = FastAPI(title="smart-wiki converter", version="0.4.0")
 _md = MarkItDown(enable_plugins=False)
+_html = HtmlConverter()  # 复用 MarkItDown 的 html->markdown（表格还原度比 mammoth 自带 md writer 好）
+app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
 
 
 def _smart_check(token: str) -> bool:
@@ -88,7 +104,41 @@ async def _load(request: Request, file: UploadFile) -> tuple[str, str, bytes]:
     return name, ext, data
 
 
-def _to_md(tmp: str) -> str:
+_IMG_EXT = {
+    "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
+    "image/bmp": "bmp", "image/webp": "webp", "image/tiff": "tif",
+    "image/svg+xml": "svg", "image/x-emf": "emf", "image/x-wmf": "wmf",
+}
+
+
+def _save_image(image) -> dict:
+    """mammoth 图片回调：抽图落盘（哈希去重），返回可访问 URL"""
+    with image.open() as f:
+        data = f.read()
+    ext = _IMG_EXT.get((image.content_type or "").lower(), "png")
+    fname = hashlib.sha256(data).hexdigest()[:20] + "." + ext
+    path = os.path.join(MEDIA_DIR, fname)
+    if not os.path.exists(path):
+        part = path + ".part"
+        with open(part, "wb") as f:
+            f.write(data)
+        os.replace(part, path)  # 原子落盘，防并发写半截
+    return {"src": f"{MEDIA_URL_BASE}/{fname}"}
+
+
+def _docx_to_md(path: str) -> str:
+    """docx 专用：mammoth 抽图 + 自定义图片处理，再走 MarkItDown 的 html->markdown"""
+    with open(path, "rb") as f:
+        pre = pre_process_docx(f)
+        html = mammoth.convert_to_html(
+            pre, convert_image=mammoth.images.img_element(_save_image)
+        ).value
+    return _html.convert_string(html).text_content.replace("\x0c", "\n")
+
+
+def _to_md(tmp: str, ext: str) -> str:
+    if ext == ".docx":
+        return _docx_to_md(tmp)
     return _md.convert(tmp).text_content.replace("\x0c", "\n")
 
 
@@ -145,7 +195,7 @@ _PAGE = """<!DOCTYPE html>
  </div>
  <div style="height:10px"></div><pre id="md"></pre>
 </div>
-<div class="tip">服务基于微软 MarkItDown · 文件只在内存转换，服务器不保存 · 内网程序调用见 README</div>
+<div class="tip">服务基于微软 MarkItDown · 正文即时转换不落库；Word 内嵌图片会保存到服务器 media 目录（哈希命名去重），MD 里引用其访问链接</div>
 <script>
 const $=id=>document.getElementById(id), drop=$('drop'), inp=$('file');
 $('key').value=localStorage.getItem('swKey')||'';
@@ -196,7 +246,7 @@ async def convert(request: Request, file: UploadFile = File(...)):
     try:
         with open(tmp, "wb") as f:
             f.write(data)
-        text = _to_md(tmp)
+        text = _to_md(tmp, ext)
         md_name = os.path.splitext(name)[0] + ".md"
         ascii_name = md_name.encode("ascii", "ignore").decode() or "output.md"
         return Response(
@@ -228,7 +278,7 @@ async def convert_json(request: Request, file: UploadFile = File(...)):
     try:
         with open(tmp, "wb") as f:
             f.write(data)
-        text = _to_md(tmp)
+        text = _to_md(tmp, ext)
         return JSONResponse(
             {
                 "ok": True,

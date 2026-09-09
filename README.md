@@ -10,7 +10,19 @@
 | POST | `/convert` | 上传文件，返回 Markdown **文件流**（`Content-Disposition: .md`，直接落盘） |
 | POST | `/convert/json` | 上传文件，返回 JSON：`{ok, filename, md, md_size, elapsed_ms}`（程序取 `md` 字段二次处理） |
 
-支持格式：`.docx .xlsx .pptx .pdf .csv .json .xml .zip .md .html .txt`（白名单外 415）；单文件上限 100MB（超限 413）；文件只在内存转换，**不落盘**。
+支持格式：`.docx .xlsx .pptx .pdf .csv .json .xml .zip .md .html .txt`（白名单外 415）；单文件上限 100MB（超限 413）。正文即时转换不落库。
+
+### Word 图片处理（v0.4.0+）
+
+docx 里的内嵌图片自动抽取保存到服务器 `media/` 目录（内容 sha256 哈希命名，同图自动去重），MD 正文生成可公网访问的图片链接：
+
+```
+![](https://www.hrfan.cn/wikidoc/media/b461ffb8fbc82249dbed.png)
+```
+
+- 图片链接前缀可用环境变量 `SMARTWIKI_MEDIA_URL` 调整；存储目录用 `SMARTWIKI_MEDIA_DIR`
+- 图片经 nginx `/wikidoc/media/` 反代公开可读（无需凭证，与正文 MD 链接配套）
+- 已知限制：文本框/SmartArt 里的图不解析（mammoth 限制）；WMF/EMF 老格式图能抽出但浏览器可能显示不了
 
 ## 认证（二选一）
 
